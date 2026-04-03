@@ -4,8 +4,8 @@ import json
 import time
 from pathlib import Path
 
-from src.logger import setup_logger, logger
-from src.workflow_engine import MedicalQAWorkflow
+from .logger import setup_logger, logger
+from .workflow_engine import MedicalQAWorkflow
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -13,8 +13,8 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     single = subparsers.add_parser("generate_single", help="Generate one round result")
-    single.add_argument("--context", required=True, help="输入上下文")
-    single.add_argument("--output", required=True, help="输出JSON文件路径")
+    single.add_argument("--context", required=True, help="Input context")
+    single.add_argument("--output", required=True, help="Output JSON file path")
     return parser
 
 
@@ -36,7 +36,7 @@ async def _generate_single(context: str, output: str) -> int:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    logger.info(f"单轮结果已写入: {out_path}")
+    logger.info(f"Single-round result written to: {out_path}")
     return 0
 
 

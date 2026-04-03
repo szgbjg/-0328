@@ -8,6 +8,7 @@ from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
 
 from .logger import logger
+from .config_loader import get_config
 from .retry_handler import async_retry
 from .validators.minimal_validator import SimpleValidator
 from .validators.content_guard import check_banned_words, sanitize_output
@@ -65,10 +66,14 @@ class MedicalQAWorkflow:
     """
     STEPS = ["QUESTION", "FACET", "QA", "DEDUP", "SYNTHESIS"]
 
-    def __init__(self, session_id: str, max_backtracks: int = 3):
+    def __init__(self, session_id: str, max_backtracks: Optional[int] = None):
+        cfg = get_config()
+        workflow_cfg = cfg.workflow
+
         self.session_id = session_id
-        self.max_backtracks = max_backtracks
-        self.checkpoints_dir = Path("data/checkpoints")
+        self.max_backtracks = max_backtracks if max_backtracks is not None else workflow_cfg.max_backtracks
+        self.max_concurrent_requests = max(1, workflow_cfg.max_concurrent_requests)
+        self.checkpoints_dir = Path(workflow_cfg.checkpoint_dir)
         self.checkpoints_dir.mkdir(parents=True, exist_ok=True)
         self.state: Optional[SessionState] = None
         self.simple_validator = SimpleValidator()
@@ -142,63 +147,75 @@ class MedicalQAWorkflow:
 
     @monitor_performance
     async def _facet_qa_agent(self, question: str, facets: List[str]) -> List[str]:
-        """并发并行生成多角度对应的回答"""
+        """并发生成多角度回答，并保证每个结果都经过相同校验流程。"""
         available_refs = [
             {"id": "R1", "source": "《药品说明书》", "content": "禁忌与不良反应"},
             {"id": "R2", "source": "《临床指南》", "content": "风险与建议"},
             {"id": "G1", "source": "图谱关系", "content": "实体关系"},
         ]
-        answers: List[str] = []
 
-        for facet in facets:
-            raw_output = await self._single_facet_qa(question, facet, temperature=0.7)
+        async def _process_one_facet(facet: str, semaphore: asyncio.Semaphore) -> Optional[str]:
+            async with semaphore:
+                raw_output = await self._single_facet_qa(question, facet, temperature=0.7)
 
-            banned = check_banned_words(raw_output)
-            if banned:
-                logger.warning(f"Facet '{facet}' 检测到禁用词: {banned}")
-                fixed_output = sanitize_output(raw_output, banned)
-                if check_banned_words(fixed_output):
-                    logger.warning(f"Facet '{facet}' 自动修正后仍违规，准备低温重试一次(temperature=0.3)")
-                    retry_output = await self._single_facet_qa(question, facet, temperature=0.3)
-                    banned = check_banned_words(retry_output)
-                    if banned:
-                        logger.error(f"Facet '{facet}' 重试后仍有禁用词: {banned}，丢弃该facet")
-                        continue
-                    logger.info(f"Facet '{facet}' 低温重试通过内容安全检查")
-                    raw_output = retry_output
-                else:
-                    logger.info(f"Facet '{facet}' 已通过自动修正清理禁用词")
-                    raw_output = fixed_output
+                banned = check_banned_words(raw_output)
+                if banned:
+                    logger.warning(f"Facet '{facet}' 检测到禁用词: {banned}")
+                    fixed_output = sanitize_output(raw_output, banned)
+                    if check_banned_words(fixed_output):
+                        logger.warning(f"Facet '{facet}' 自动修正后仍违规，准备低温重试一次(temperature=0.3)")
+                        retry_output = await self._single_facet_qa(question, facet, temperature=0.3)
+                        banned = check_banned_words(retry_output)
+                        if banned:
+                            logger.error(f"Facet '{facet}' 重试后仍有禁用词: {banned}，丢弃该facet")
+                            return None
+                        logger.info(f"Facet '{facet}' 低温重试通过内容安全检查")
+                        raw_output = retry_output
+                    else:
+                        logger.info(f"Facet '{facet}' 已通过自动修正清理禁用词")
+                        raw_output = fixed_output
 
-            ev = self.evidence_validator.validate(raw_output, available_refs)
-            if not ev["is_valid"] and ev.get("fixed_text"):
-                logger.warning(f"Facet '{facet}' 证据链尝试自动修正: {ev['errors']}")
-                raw_output = ev["fixed_text"]
                 ev = self.evidence_validator.validate(raw_output, available_refs)
-            if not ev["is_valid"]:
-                logger.error(f"Facet '{facet}' 证据链无法修复，丢弃该facet: {ev['errors']}")
-                continue
+                if not ev["is_valid"] and ev.get("fixed_text"):
+                    logger.warning(f"Facet '{facet}' 证据链尝试自动修正: {ev['errors']}")
+                    raw_output = ev["fixed_text"]
+                    ev = self.evidence_validator.validate(raw_output, available_refs)
+                if not ev["is_valid"]:
+                    logger.error(f"Facet '{facet}' 证据链无法修复，丢弃该facet: {ev['errors']}")
+                    return None
 
-            vr = self.simple_validator.validate(
-                raw_output,
-                expected_facet=facet,
-                banned_words=[],
-                require_think_tags=True,
-                require_evidence_chain=True,
-            )
-            if not vr["is_valid"]:
-                logger.error(f"Facet '{facet}' 格式校验失败，丢弃该facet: {vr['errors']}")
-                continue
+                vr = self.simple_validator.validate(
+                    raw_output,
+                    expected_facet=facet,
+                    banned_words=[],
+                    require_think_tags=True,
+                    require_evidence_chain=True,
+                )
+                if not vr["is_valid"]:
+                    logger.error(f"Facet '{facet}' 格式校验失败，丢弃该facet: {vr['errors']}")
+                    return None
 
-            thinking, body = raw_output, ""
-            if "</think>" in raw_output:
-                thinking, body = raw_output.split("</think>", 1)
-                thinking = thinking + "</think>"
-                body = body.strip()
-            for ref in available_refs:
-                if ref["id"] in ev.get("found", []):
-                    body = format_paragraph_with_source(body, ref["source"])
-            answers.append(format_final_answer(thinking, body))
+                thinking, body = raw_output, ""
+                if "</think>" in raw_output:
+                    thinking, body = raw_output.split("</think>", 1)
+                    thinking = thinking + "</think>"
+                    body = body.strip()
+                for ref in available_refs:
+                    if ref["id"] in ev.get("found", []):
+                        body = format_paragraph_with_source(body, ref["source"])
+                return format_final_answer(thinking, body)
+
+        semaphore = asyncio.Semaphore(self.max_concurrent_requests)
+        tasks = [_process_one_facet(facet, semaphore) for facet in facets]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        answers: List[str] = []
+        for facet, result in zip(facets, results):
+            if isinstance(result, Exception):
+                logger.error(f"Facet '{facet}' 执行异常: {result}")
+                continue
+            if result:
+                answers.append(result)
 
         return answers
 

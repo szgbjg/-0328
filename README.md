@@ -1,28 +1,71 @@
 # 医药知识图谱多轮问答系统 (Medical KG QA System)
 
-基于医药知识图谱的多轮问答系统基础框架。
+本项目提供可直接运行的 demo 入口，支持本地 Python 与 Docker 两种方式。
 
-## 项目结构
-- `src/`: 核心源代码模块
-- `config/`: 配置文件目录 (YAML, JSON等)
-- `tests/`: 单元测试与集成测试
-- `docs/`: 项目文档
-- `data/`: 数据存储目录
+## 快速开始（本地）
 
-## 核心模块
-- `api_client.py`: 异步HTTP API客户端封装，包含对KG和LLM的调用支持。
-- `config_manager.py`: 基于 Pydantic 的配置管理，支持环境变量。
-- `logger.py`: 基于 loguru 的日志记录。
-- `retry_handler.py`: 基于 tenacity 的通用重试与回溯机制。
-- `parallel_processor.py`: 基于 asyncio 的并发任务处理工具。
+1. 安装依赖
 
-## 安装与运行
-1. 克隆代码后安装依赖：
-   ```bash
-   pip install -r requirements.txt
-   ```
-2. 复制环境变量文件并配置：
-   ```bash
-   cp .env.example .env
-   ```
-3. 运行主程序（待实现）。
+```bash
+pip install -r requirements.txt
+```
+
+2. 准备配置
+
+```bash
+cp .env.example .env
+cp config/settings.example.yaml config/settings.yaml
+```
+
+3. 单轮生成（CLI）
+
+```bash
+python -m src.cli generate_single --context "患者主诉：头晕恶心，服药后无改善" --output output/cli_single.json
+```
+
+输出文件：`output/cli_single.json`
+
+4. 多轮 demo（脚本）
+
+```bash
+python test_run.py
+```
+
+输出文件：`output/test_round.json`
+
+## Docker 运行
+
+1. 启动容器
+
+```bash
+docker compose up -d
+```
+
+2. 在容器里运行单轮 CLI
+
+```bash
+docker compose exec medical_qa_app python -m src.cli generate_single --context "患者主诉：头晕恶心，服药后无改善" --output output/cli_single.json
+```
+
+3. 在容器里运行多轮 demo
+
+```bash
+docker compose exec medical_qa_app python test_run.py
+```
+
+容器内输出同样位于 `output/`，并映射到宿主机项目目录。
+
+## 配置说明
+
+- 环境变量使用前缀 `APP_`，嵌套字段用双下划线：
+  - `APP_API__MODEL_API_KEY`
+  - `APP_API__KG_API_KEY`
+- YAML 默认路径是 `config/settings.yaml`。
+- 可用 `APP_CONFIG_YAML` 指定自定义 YAML 路径。
+- 配置优先级：初始化参数 > 环境变量 > `.env` > YAML > 默认值。
+
+## 最小验证
+
+```bash
+pytest tests/test_config_loading.py -q
+```

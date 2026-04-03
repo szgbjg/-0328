@@ -1,0 +1,1 @@
+"""Medical KG QA package."""

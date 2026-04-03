@@ -33,6 +33,7 @@ ENV/
 .env
 .env.local
 .env.*
+!.env.example
 
 # Project Specific Data
 data/
