@@ -1,0 +1,29 @@
+api:
+  model_endpoint: "https://volley.inner.yzint.cn/v1/chat/completions"
+  model_api_key: "" # 建议在 .env 或环境变量中通过 APP_API__MODEL_API_KEY 配置
+  kg_endpoint: "https://api.example.com/kg"
+  kg_api_key: ""    # 建议在 .env 或环境变量中通过 APP_API__KG_API_KEY 配置
+  timeout_connect: 10
+  timeout_read: 60
+
+knowledge_graph:
+  base_id: 201
+  hop_count: 2
+  count: 2
+
+workflow:
+  max_retries: 3
+  max_backtracks: 3
+  max_concurrent_requests: 10
+  min_rounds: 3
+  max_rounds: 8
+  checkpoint_dir: "data/checkpoints"
+
+model_routing:
+  question_creator: "gpt5.2"
+  facet_planner: "gpt5.2"
+  facet_expander: "gemini3pro"
+  facet_reducer: "gemini3pro"
+  facet_qa_agent: "kimi2.5"
+  redundancy_detector: "gpt5.2"
+  synthesis_agent: "kimi2.5"

@@ -1,0 +1,12 @@
+{
+  "id": "",
+  "object": "",
+  "created": 0,
+  "model": "",
+  "choices": null,
+  "error": {
+    "message": "模型不存在",
+    "type": "biz_error",
+    "code": "20201"
+  }
+}

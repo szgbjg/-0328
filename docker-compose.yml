@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  medical_qa_app:
+    image: python:3.9-slim
+    container_name: medical_qa_dev
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+      - /workspace/venv  # 避免宿主机venv穿透覆盖到容器内
+    environment:
+      # 映射环境变量字典（优先覆盖 settings.yaml）
+      - TZ=Asia/Shanghai
+      - APP_API__MODEL_API_KEY=${APP_API__MODEL_API_KEY:-development_model_key}
+      - APP_API__KG_API_KEY=${APP_API__KG_API_KEY:-development_kg_key}
+      - LOG_LEVEL=DEBUG
+    command: >
+      /bin/bash -c "
+      pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt &&
+      echo '环境依赖安装完毕，保持容器运行中...' &&
+      tail -f /dev/null
+      "
+    restart: unless-stopped
+    networks:
+      - qa_network
+
+networks:
+  qa_network:
+    driver: bridge
